@@ -71,21 +71,62 @@ class UnconfiguredSheetService:
         raise ConfigurationError("Missing credentials")
 
 
-def test_api_search_success(tmp_path: Path):
+def _auth_headers(client, password: str = "inhouse101") -> dict[str, str]:
+    resp = client.post("/api/auth", json={"password": password})
+    assert resp.status_code == 200
+    return {"X-Auth-Token": resp.get_json()["token"]}
+
+
+def test_api_auth_rejects_wrong_password(tmp_path: Path):
     app = create_app(sheet_service=FakeSheetService(), base_dir=tmp_path)
     client = app.test_client()
 
-    resp = client.get("/api/search?phone=8319754818")
+    resp = client.post("/api/auth", json={"password": "wrong"})
+    assert resp.status_code == 401
+
+
+def test_api_search_requires_auth(tmp_path: Path):
+    app = create_app(sheet_service=FakeSheetService(), base_dir=tmp_path)
+    client = app.test_client()
+
+    assert client.get("/api/search?phone=8319754818").status_code == 401
+    assert client.post("/api/refresh").status_code == 401
+
+
+def test_api_search_full_password_returns_rows(tmp_path: Path):
+    app = create_app(sheet_service=FakeSheetService(), base_dir=tmp_path)
+    client = app.test_client()
+    headers = _auth_headers(client, "inhouse101")
+
+    resp = client.get("/api/search?phone=8319754818", headers=headers)
     assert resp.status_code == 200
     data = resp.get_json()
+    assert data["mode"] == "full"
     assert len(data["matches"]) == 3
+
+
+def test_api_search_masked_password_hides_rows(tmp_path: Path):
+    app = create_app(sheet_service=FakeSheetService(), base_dir=tmp_path)
+    client = app.test_client()
+    headers = _auth_headers(client, "cgm2026")
+
+    dup_resp = client.get("/api/search?phone=8319754818", headers=headers)
+    assert dup_resp.status_code == 200
+    dup_data = dup_resp.get_json()
+    assert dup_data == {"query": "8319754818", "mode": "masked", "is_duplicate": True}
+
+    ok_resp = client.get("/api/search?phone=7000000000", headers=headers)
+    assert ok_resp.status_code == 200
+    ok_data = ok_resp.get_json()
+    assert ok_data == {"query": "7000000000", "mode": "masked", "is_duplicate": False}
 
 
 def test_api_search_invalid_number(tmp_path: Path):
     app = create_app(sheet_service=FakeSheetService(), base_dir=tmp_path)
     client = app.test_client()
+    headers = _auth_headers(client, "inhouse101")
 
-    resp = client.get("/api/search?phone=12345")
+    resp = client.get("/api/search?phone=12345", headers=headers)
     assert resp.status_code == 400
     assert "error" in resp.get_json()
 
@@ -93,8 +134,9 @@ def test_api_search_invalid_number(tmp_path: Path):
 def test_api_search_unconfigured_returns_503(tmp_path: Path):
     app = create_app(sheet_service=UnconfiguredSheetService(), base_dir=tmp_path)
     client = app.test_client()
+    headers = _auth_headers(client, "inhouse101")
 
-    resp = client.get("/api/search?phone=8319754818")
+    resp = client.get("/api/search?phone=8319754818", headers=headers)
     assert resp.status_code == 503
     assert resp.get_json()["needs_setup"] is True
 
