@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TeleSpeak CGM Dupe Checker</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v='2') }}" />
+</head>
+<body>
+  <main class="container">
+    <header class="header">
+      <div class="brand">
+        <h1>TeleSpeak CGM Dupe Checker</h1>
+        <span id="statusBadge" class="status-pill status-loading">Checking…</span>
+      </div>
+      <button type="button" id="syncBtn" class="btn-sync" title="Refresh data">
+        ↻ Sync
+      </button>
+    </header>
+
+    <section class="search-wrap">
+      <form id="searchForm" class="search-form" novalidate>
+        <div class="input-group">
+          <label for="phoneInput" class="sr-only">10-digit phone number</label>
+          <input
+            type="text"
+            id="phoneInput"
+            name="phone"
+            inputmode="numeric"
+            autocomplete="off"
+            maxlength="10"
+            placeholder="Enter 10-digit phone number"
+            autofocus
+          />
+          <span id="digitCount" class="digit-count">0/10</span>
+          <button type="button" id="clearBtn" class="btn-clear hidden" title="Clear">✕</button>
+        </div>
+        <button type="submit" id="searchBtn" class="btn-primary">Check</button>
+      </form>
+      <div id="errorBox" class="alert alert-error hidden" role="alert"></div>
+    </section>
+
+    <section id="resultsSection" class="results-section hidden">
+      <div id="verdictBanner" class="verdict-banner">
+        <div class="verdict-left">
+          <span id="verdictLabel" class="verdict-label"></span>
+          <span id="verdictDetail" class="verdict-detail"></span>
+        </div>
+      </div>
+
+      <div id="tableWrapper" class="table-wrapper hidden">
+        <table id="resultsTable">
+          <thead id="resultsHead"></thead>
+          <tbody id="resultsBody"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <script src="{{ url_for('static', filename='app.js', v='2') }}"></script>
+</body>
+</html>

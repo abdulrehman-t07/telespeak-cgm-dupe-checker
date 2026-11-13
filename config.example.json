@@ -1,0 +1,9 @@
+{
+  "spreadsheet_id": "PASTE_YOUR_GOOGLE_SHEET_ID_HERE",
+  "sheet_name": "Sheet1",
+  "credentials_file": "credentials.json",
+  "columns": {
+    "original": "Phone (Original)",
+    "show": "Phone (Show)"
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "spreadsheet_id": "13uWh7W7HsrG0RYn31oUp2rUs199bCCOVmTb5zoDUBCw",
+  "sheet_name": "Form Responses 1",
+  "credentials_file": "credentials.json",
+  "columns": {
+    "original": "Phone (Original)",
+    "show": "Phone (Show)"
+  }
+}
