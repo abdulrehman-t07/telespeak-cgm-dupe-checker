@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 import os
 import re
@@ -39,6 +40,27 @@ def load_config(config_path: Path) -> dict[str, Any]:
         raise ConfigurationError(f"Invalid JSON in {config_path.name}: {exc}") from exc
 
     return data
+
+
+def _parse_credentials_env(raw: str) -> dict[str, Any]:
+    """Parse GOOGLE_CREDENTIALS_JSON from raw JSON, quoted JSON, or base64-encoded JSON."""
+    cleaned = raw.lstrip("\ufeff").strip()
+    if (cleaned.startswith("'") and cleaned.endswith("'")) or (
+        cleaned.startswith('"') and cleaned.endswith('"')
+    ):
+        inner = cleaned[1:-1].strip()
+        if inner.startswith("{"):
+            cleaned = inner
+
+    if not cleaned.startswith("{"):
+        try:
+            decoded = base64.b64decode(cleaned, validate=True).decode("utf-8").strip()
+            if decoded.startswith("{"):
+                cleaned = decoded
+        except Exception:
+            pass
+
+    return json.loads(cleaned)
 
 
 def _resolve_runtime_config(base_dir: Path) -> dict[str, Any]:
@@ -87,10 +109,10 @@ def get_setup_status(base_dir: Path) -> dict[str, Any]:
 
     if env_creds_json:
         try:
-            creds_data = json.loads(env_creds_json)
+            creds_data = _parse_credentials_env(env_creds_json)
             status["has_credentials"] = True
             status["service_account_email"] = creds_data.get("client_email")
-        except json.JSONDecodeError:
+        except Exception:
             status["has_credentials"] = False
     else:
         creds_rel = str(config.get("credentials_file", "credentials.json")).strip() or "credentials.json"
@@ -218,9 +240,11 @@ class GoogleSheetService:
         env_creds_json = os.environ.get("GOOGLE_CREDENTIALS_JSON", "").strip()
         if env_creds_json:
             try:
-                info = json.loads(env_creds_json)
-            except json.JSONDecodeError as exc:
-                raise ConfigurationError(f"Invalid JSON in GOOGLE_CREDENTIALS_JSON: {exc}") from exc
+                info = _parse_credentials_env(env_creds_json)
+            except Exception as exc:
+                raise ConfigurationError(
+                    "Invalid GOOGLE_CREDENTIALS_JSON: paste the full JSON contents of credentials.json (or base64-encoded JSON)."
+                ) from exc
             creds = Credentials.from_service_account_info(info, scopes=SCOPES)
             return config, creds
 
