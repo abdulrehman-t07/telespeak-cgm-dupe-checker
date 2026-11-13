@@ -1,0 +1,14 @@
+name: Keep Render App Awake
+
+on:
+  schedule:
+    # Runs every 14 minutes between 12:00 and 02:59 UTC (15 hrs/day, stays under 2,000 free min/month on private repos)
+    - cron: "*/14 12-23,0-2 * * *"
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Render service
+        run: curl -fsS --max-time 30 https://telespeak-cgm-dupe-checker.onrender.com/api/status > /dev/null
