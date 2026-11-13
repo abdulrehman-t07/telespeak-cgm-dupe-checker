@@ -24,6 +24,10 @@
 
 body {
   margin: 0;
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Inter, sans-serif;
   background: var(--bg);
   color: var(--text);
@@ -32,23 +36,27 @@ body {
 }
 
 .container {
-  max-width: 1140px;
+  width: 100%;
+  max-width: 1120px;
   margin: 0 auto;
-  padding: 40px 20px 64px;
+  padding: 40px 20px;
 }
 
 .header {
+  max-width: 620px;
+  margin: 0 auto 22px;
   display: flex;
-  justify-content: space-between;
+  flex-direction: column;
   align-items: center;
+  text-align: center;
   gap: 12px;
-  margin-bottom: 24px;
 }
 
 .brand {
   display: flex;
   align-items: center;
-  gap: 12px;
+  justify-content: center;
+  gap: 10px;
   flex-wrap: wrap;
 }
 
@@ -145,7 +153,8 @@ code {
 }
 
 .search-wrap {
-  margin-bottom: 20px;
+  max-width: 620px;
+  margin: 0 auto 24px;
 }
 
 .search-form {
@@ -260,14 +269,16 @@ code {
 }
 
 .verdict-banner {
+  max-width: 620px;
+  margin: 0 auto 16px;
   display: flex;
   flex-wrap: wrap;
-  justify-content: space-between;
+  justify-content: center;
   align-items: center;
+  text-align: center;
   gap: 10px;
   padding: 16px 20px;
   border-radius: var(--radius);
-  margin-bottom: 16px;
 }
 
 .verdict-duplicate {
