@@ -2,8 +2,8 @@ name: Keep Render App Awake
 
 on:
   schedule:
-    # Runs every 14 minutes between 12:00 and 23:59 UTC (5:00 PM - 4:59 AM PKT; covers 6 PM - 4 AM PKT shift)
-    - cron: "*/14 12-23 * * *"
+    # Runs every 14 minutes between 14:00 and 21:59 UTC (7:00 PM - 2:59 AM PKT; keeps awake through 3 AM PKT)
+    - cron: "*/14 14-21 * * *"
   workflow_dispatch:
 
 jobs:
