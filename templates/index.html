@@ -3,14 +3,14 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>TeleSpeak CGM Dupe Checker</title>
-  <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v='4') }}" />
+  <title>CGM Dupe Checker</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v='5') }}" />
 </head>
 <body>
   <main class="container">
     <header class="header">
       <div class="brand">
-        <h1>TeleSpeak CGM Dupe Checker</h1>
+        <h1>CGM Dupe Checker</h1>
         <span id="statusBadge" class="status-pill status-loading">Checking…</span>
       </div>
       <button type="button" id="syncBtn" class="btn-sync hidden" title="Refresh data">
@@ -76,6 +76,6 @@
     </section>
   </main>
 
-  <script src="{{ url_for('static', filename='app.js', v='4') }}"></script>
+  <script src="{{ url_for('static', filename='app.js', v='5') }}"></script>
 </body>
 </html>

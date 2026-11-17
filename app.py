@@ -19,7 +19,7 @@ def _build_serializer() -> URLSafeSerializer:
     seed = (
         os.environ.get("FLASK_SECRET_KEY")
         or os.environ.get("SPREADSHEET_ID")
-        or "telespeak-cgm-dupe-checker-secret"
+        or "cgm-dupe-checker-secret"
     )
     key = hashlib.sha256(seed.encode("utf-8")).hexdigest()
     return URLSafeSerializer(key, salt="ts-auth")

@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: telespeak-cgm-dupe-checker
+    name: cgm-dupe-checker
     runtime: python
     plan: free
     buildCommand: pip install -r requirements.txt
