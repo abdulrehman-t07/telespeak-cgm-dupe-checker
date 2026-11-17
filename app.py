@@ -84,11 +84,12 @@ def create_app(sheet_service: Any | None = None, base_dir: Path | None = None) -
                 result = service.search_phone(phone)
 
             if mode == "masked":
+                total_matches = result.get("total_matches", len(result.get("matches", [])))
                 return jsonify(
                     {
                         "query": result["query"],
                         "mode": "masked",
-                        "is_duplicate": len(result["matches"]) > 0,
+                        "is_duplicate": total_matches > 0,
                     }
                 )
 

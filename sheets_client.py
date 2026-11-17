@@ -76,6 +76,17 @@ def _resolve_runtime_config(base_dir: Path) -> dict[str, Any]:
         config["spreadsheet_id"] = env_sheet_id
     if env_sheet_name:
         config["sheet_name"] = env_sheet_name
+
+    second_cfg = dict(config.get("second_sheet") or {})
+    env_second_id = os.environ.get("SECOND_SPREADSHEET_ID", "").strip()
+    env_second_name = os.environ.get("SECOND_SHEET_NAME", "").strip()
+    if env_second_id:
+        second_cfg["spreadsheet_id"] = env_second_id
+    if env_second_name:
+        second_cfg["sheet_name"] = env_second_name
+    if second_cfg:
+        config["second_sheet"] = second_cfg
+
     return config
 
 
@@ -220,14 +231,76 @@ def search_rows(
     }
 
 
+def _matches_us_or_ten_digit(cell_value: str, target: str) -> bool:
+    """Match exact 10-digit target or 11-digit '1' + 10-digit target."""
+    cleaned = cell_value.strip()
+    if cleaned == target:
+        return True
+    return len(cleaned) == 11 and cleaned.startswith("1") and cleaned[1:] == target
+
+
+def search_column_a_rows(rows: list[list[Any]], phone_number: str) -> dict[str, Any]:
+    """Search Column A for 10-digit target or 11-digit '1' + target."""
+    target = validate_phone_number(phone_number)
+
+    if not rows:
+        return {
+            "query": target,
+            "headers": [],
+            "matches": [],
+            "total_rows_searched": 0,
+        }
+
+    first_col_cell = str(rows[0][0]).strip() if rows[0] else ""
+    first_row_is_data = bool(re.fullmatch(r"\d{10,11}", first_col_cell))
+
+    max_width = max(len(r) for r in rows)
+    if first_row_is_data:
+        headers = ["Phone"] + [f"Column {i + 1}" for i in range(1, max_width)]
+        data_rows = rows
+        start_row_number = 1
+    else:
+        raw_headers = [str(cell) for cell in rows[0]]
+        headers = list(raw_headers)
+        for col_idx in range(len(headers), max_width):
+            headers.append(f"Column {col_idx + 1}")
+        data_rows = rows[1:]
+        start_row_number = 2
+
+    matches: list[dict[str, Any]] = []
+    for offset, row in enumerate(data_rows):
+        sheet_row_number = offset + start_row_number
+        row_values = [str(cell) if cell is not None else "" for cell in row]
+        if len(row_values) < max_width:
+            row_values.extend([""] * (max_width - len(row_values)))
+
+        if row_values and _matches_us_or_ten_digit(row_values[0], target):
+            matches.append(
+                {
+                    "row_number": sheet_row_number,
+                    "matched_columns": [headers[0]],
+                    "matched_indices": [0],
+                    "values": row_values,
+                }
+            )
+
+    return {
+        "query": target,
+        "headers": headers,
+        "matches": matches,
+        "total_rows_searched": len(data_rows),
+    }
+
+
 class GoogleSheetService:
-    """Client for fetching rows from a private Google Sheet via Service Account."""
+    """Client for fetching rows from private Google Sheets via Service Account."""
 
     def __init__(self, base_dir: Path, cache_ttl_seconds: float = 20.0) -> None:
         self.base_dir = base_dir
         self.cache_ttl_seconds = cache_ttl_seconds
         self._lock = threading.Lock()
         self._cached_rows: list[list[Any]] | None = None
+        self._cached_second_rows: list[list[Any]] | None = None
         self._cached_config: dict[str, Any] | None = None
         self._cache_time: float = 0.0
 
@@ -261,8 +334,34 @@ class GoogleSheetService:
         creds = Credentials.from_service_account_file(str(creds_path), scopes=SCOPES)
         return config, creds
 
-    def fetch_rows(self, force_refresh: bool = False) -> tuple[list[list[Any]], dict[str, Any]]:
-        """Fetch all rows from the configured sheet tab, using a short-lived cache."""
+    @staticmethod
+    def _fetch_tab_values(service: Any, spreadsheet_id: str, sheet_name: str) -> list[list[Any]]:
+        target_tab = sheet_name.strip()
+        if not target_tab:
+            meta = (
+                service.spreadsheets()
+                .get(spreadsheetId=spreadsheet_id, fields="sheets(properties(title))")
+                .execute()
+            )
+            sheets = meta.get("sheets", [])
+            if not sheets:
+                return []
+            target_tab = sheets[0]["properties"]["title"]
+
+        result = (
+            service.spreadsheets()
+            .values()
+            .get(
+                spreadsheetId=spreadsheet_id,
+                range=f"'{target_tab}'",
+                valueRenderOption="FORMATTED_VALUE",
+            )
+            .execute()
+        )
+        return result.get("values", [])
+
+    def _fetch_all(self, force_refresh: bool = False) -> tuple[list[list[Any]], list[list[Any]] | None, dict[str, Any]]:
+        """Fetch primary and optional secondary sheet rows using a short-lived cache."""
         with self._lock:
             now = time.monotonic()
             if (
@@ -271,38 +370,70 @@ class GoogleSheetService:
                 and self._cached_config is not None
                 and (now - self._cache_time) < self.cache_ttl_seconds
             ):
-                return self._cached_rows, self._cached_config
+                return self._cached_rows, self._cached_second_rows, self._cached_config
 
         config, creds = self._get_config_and_credentials()
         spreadsheet_id = str(config["spreadsheet_id"]).strip()
         sheet_name = str(config.get("sheet_name", "Sheet1")).strip() or "Sheet1"
 
         service = build("sheets", "v4", credentials=creds, cache_discovery=False)
-        range_name = f"'{sheet_name}'"
-        result = (
-            service.spreadsheets()
-            .values()
-            .get(
-                spreadsheetId=spreadsheet_id,
-                range=range_name,
-                valueRenderOption="FORMATTED_VALUE",
-            )
-            .execute()
-        )
-        rows = result.get("values", [])
+        rows = self._fetch_tab_values(service, spreadsheet_id, sheet_name)
+
+        second_rows: list[list[Any]] | None = None
+        second_cfg = config.get("second_sheet") or {}
+        second_id = str(second_cfg.get("spreadsheet_id", "")).strip()
+        if second_id and second_id != PLACEHOLDER_SHEET_ID:
+            second_name = str(second_cfg.get("sheet_name", "")).strip()
+            second_rows = self._fetch_tab_values(service, second_id, second_name)
 
         with self._lock:
             self._cached_rows = rows
+            self._cached_second_rows = second_rows
             self._cached_config = config
             self._cache_time = time.monotonic()
 
+        return rows, second_rows, config
+
+    def fetch_rows(self, force_refresh: bool = False) -> tuple[list[list[Any]], dict[str, Any]]:
+        """Fetch all rows from the configured sheet tab(s), using a short-lived cache."""
+        rows, _, config = self._fetch_all(force_refresh=force_refresh)
         return rows, config
 
     def search_phone(self, phone_number: str, force_refresh: bool = False) -> dict[str, Any]:
-        """Validate phone_number, fetch sheet rows, and return matching rows."""
+        """Validate phone_number, fetch sheet rows, and return matching rows across all configured sheets."""
         validated = validate_phone_number(phone_number)
-        rows, config = self.fetch_rows(force_refresh=force_refresh)
+        rows, second_rows, config = self._fetch_all(force_refresh=force_refresh)
+
         columns_cfg = config.get("columns", {})
         orig_name = str(columns_cfg.get("original", "Phone (Original)")).strip() or "Phone (Original)"
         show_name = str(columns_cfg.get("show", "Phone (Show)")).strip() or "Phone (Show)"
-        return search_rows(rows, validated, original_col_name=orig_name, show_col_name=show_name)
+
+        primary_res = search_rows(rows, validated, original_col_name=orig_name, show_col_name=show_name)
+        sources: list[dict[str, Any]] = [
+            {
+                "label": "Sheet 1",
+                "headers": primary_res["headers"],
+                "matches": primary_res["matches"],
+                "total_rows_searched": primary_res["total_rows_searched"],
+            }
+        ]
+        total_searched = primary_res["total_rows_searched"]
+        total_matches = len(primary_res["matches"])
+
+        if second_rows is not None:
+            second_res = search_column_a_rows(second_rows, validated)
+            sources.append(
+                {
+                    "label": "Sheet 2",
+                    "headers": second_res["headers"],
+                    "matches": second_res["matches"],
+                    "total_rows_searched": second_res["total_rows_searched"],
+                }
+            )
+            total_searched += second_res["total_rows_searched"]
+            total_matches += len(second_res["matches"])
+
+        primary_res["sources"] = sources
+        primary_res["total_rows_searched"] = total_searched
+        primary_res["total_matches"] = total_matches
+        return primary_res

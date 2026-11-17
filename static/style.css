@@ -335,6 +335,12 @@ code {
   color: var(--muted);
 }
 
+.results-tables {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
 .table-wrapper {
   background: var(--surface);
   overflow-x: auto;

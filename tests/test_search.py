@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from app import create_app
-from sheets_client import ConfigurationError, search_rows, validate_phone_number
+from sheets_client import ConfigurationError, search_column_a_rows, search_rows, validate_phone_number
 
 SAMPLE_ROWS = [
     ["ID", "Name", "City", "Phone (Original)", "Phone (Show)", "Notes"],
@@ -159,3 +159,27 @@ def test_api_status_reflects_config(tmp_path: Path):
     assert data["configured"] is True
     assert data["sheet_name"] == "Leads"
     assert data["service_account_email"] == "bot@example.iam.gserviceaccount.com"
+
+
+def test_search_column_a_matches_leading_1_and_exact_10_digits():
+    rows_with_header = [
+        ["Phone", "Status"],
+        ["19012409963", "Used"],
+        ["9012409963", "Also Used"],
+        ["29012409963", "Different prefix"],
+    ]
+    res = search_column_a_rows(rows_with_header, "9012409963")
+    assert res["total_rows_searched"] == 3
+    assert [m["row_number"] for m in res["matches"]] == [2, 3]
+    assert res["matches"][0]["matched_indices"] == [0]
+
+
+def test_search_column_a_without_header_row():
+    rows_no_header = [
+        ["19012409963"],
+        ["18005551234"],
+    ]
+    res = search_column_a_rows(rows_no_header, "9012409963")
+    assert res["total_rows_searched"] == 2
+    assert res["headers"] == ["Phone"]
+    assert [m["row_number"] for m in res["matches"]] == [1]

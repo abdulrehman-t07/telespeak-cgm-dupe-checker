@@ -21,9 +21,7 @@ const resultsSection = document.getElementById("resultsSection");
 const verdictBanner = document.getElementById("verdictBanner");
 const verdictLabel = document.getElementById("verdictLabel");
 const verdictDetail = document.getElementById("verdictDetail");
-const tableWrapper = document.getElementById("tableWrapper");
-const resultsHead = document.getElementById("resultsHead");
-const resultsBody = document.getElementById("resultsBody");
+const resultsTables = document.getElementById("resultsTables");
 
 function getAuthToken() {
   return sessionStorage.getItem(TOKEN_KEY) || "";
@@ -192,57 +190,27 @@ syncBtn.addEventListener("click", async () => {
   }
 });
 
-function renderResults(data) {
-  resultsSection.classList.remove("hidden");
-  resultsHead.innerHTML = "";
-  resultsBody.innerHTML = "";
+function buildResultTable(headers, matches) {
+  const wrapper = document.createElement("div");
+  wrapper.className = "table-wrapper";
 
-  if (data.mode === "masked") {
-    tableWrapper.classList.add("hidden");
-    if (data.is_duplicate) {
-      verdictBanner.className = "verdict-banner verdict-duplicate";
-      verdictLabel.textContent = "DUPLICATE";
-      verdictDetail.textContent = data.query;
-    } else {
-      verdictBanner.className = "verdict-banner verdict-clear";
-      verdictLabel.textContent = "NOT FOUND — GOOD TO GO";
-      verdictDetail.textContent = data.query;
-    }
-    return;
-  }
-
-  const count = data.matches.length;
-
-  if (count === 0) {
-    verdictBanner.className = "verdict-banner verdict-clear";
-    verdictLabel.textContent = "NOT FOUND — GOOD TO GO";
-    verdictDetail.textContent = data.query;
-    tableWrapper.classList.add("hidden");
-    return;
-  }
-
-  verdictBanner.className = "verdict-banner verdict-duplicate";
-  verdictLabel.textContent = "DUPLICATE";
-  verdictDetail.textContent =
-    count === 1
-      ? `1 matching row for ${data.query}`
-      : `${count} matching rows for ${data.query}`;
-
-  tableWrapper.classList.remove("hidden");
+  const table = document.createElement("table");
+  const thead = document.createElement("thead");
+  const tbody = document.createElement("tbody");
 
   const headerRow = document.createElement("tr");
   const rowNumTh = document.createElement("th");
   rowNumTh.textContent = "Row #";
   headerRow.appendChild(rowNumTh);
 
-  data.headers.forEach((header) => {
+  headers.forEach((header) => {
     const th = document.createElement("th");
     th.textContent = header || "(Blank)";
     headerRow.appendChild(th);
   });
-  resultsHead.appendChild(headerRow);
+  thead.appendChild(headerRow);
 
-  data.matches.forEach((match) => {
+  matches.forEach((match) => {
     const tr = document.createElement("tr");
 
     const rowNumTd = document.createElement("td");
@@ -260,7 +228,59 @@ function renderResults(data) {
       tr.appendChild(td);
     });
 
-    resultsBody.appendChild(tr);
+    tbody.appendChild(tr);
+  });
+
+  table.appendChild(thead);
+  table.appendChild(tbody);
+  wrapper.appendChild(table);
+  return wrapper;
+}
+
+function renderResults(data) {
+  resultsSection.classList.remove("hidden");
+  resultsTables.innerHTML = "";
+
+  if (data.mode === "masked") {
+    resultsTables.classList.add("hidden");
+    if (data.is_duplicate) {
+      verdictBanner.className = "verdict-banner verdict-duplicate";
+      verdictLabel.textContent = "DUPLICATE";
+      verdictDetail.textContent = data.query;
+    } else {
+      verdictBanner.className = "verdict-banner verdict-clear";
+      verdictLabel.textContent = "NOT FOUND — GOOD TO GO";
+      verdictDetail.textContent = data.query;
+    }
+    return;
+  }
+
+  const sources = Array.isArray(data.sources)
+    ? data.sources.filter((s) => s.matches && s.matches.length > 0)
+    : data.matches && data.matches.length > 0
+      ? [{ headers: data.headers, matches: data.matches }]
+      : [];
+
+  const count = sources.reduce((sum, s) => sum + s.matches.length, 0);
+
+  if (count === 0) {
+    verdictBanner.className = "verdict-banner verdict-clear";
+    verdictLabel.textContent = "NOT FOUND — GOOD TO GO";
+    verdictDetail.textContent = data.query;
+    resultsTables.classList.add("hidden");
+    return;
+  }
+
+  verdictBanner.className = "verdict-banner verdict-duplicate";
+  verdictLabel.textContent = "DUPLICATE";
+  verdictDetail.textContent =
+    count === 1
+      ? `1 matching row for ${data.query}`
+      : `${count} matching rows for ${data.query}`;
+
+  resultsTables.classList.remove("hidden");
+  sources.forEach((source) => {
+    resultsTables.appendChild(buildResultTable(source.headers, source.matches));
   });
 }
 
