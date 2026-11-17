@@ -9,7 +9,7 @@ from flask import Flask, jsonify, render_template, request
 from googleapiclient.errors import HttpError
 from itsdangerous import BadSignature, URLSafeSerializer
 
-from sheets_client import ConfigurationError, GoogleSheetService, get_setup_status
+from sheets_client import ConfigurationError, GoogleSheetService, SheetFetchError, get_setup_status
 
 BASE_DIR = Path(__file__).resolve().parent
 
@@ -99,6 +99,8 @@ def create_app(sheet_service: Any | None = None, base_dir: Path | None = None) -
             return jsonify({"error": str(exc)}), 400
         except ConfigurationError as exc:
             return jsonify({"error": str(exc), "needs_setup": True}), 503
+        except SheetFetchError as exc:
+            return jsonify({"error": str(exc)}), exc.status_code
         except HttpError as exc:
             status_code = getattr(exc.resp, "status", 502)
             if status_code == 403:
@@ -127,6 +129,8 @@ def create_app(sheet_service: Any | None = None, base_dir: Path | None = None) -
             return jsonify({"refreshed": True, "total_rows": max(len(rows) - 1, 0)})
         except ConfigurationError as exc:
             return jsonify({"error": str(exc), "needs_setup": True}), 503
+        except SheetFetchError as exc:
+            return jsonify({"error": str(exc)}), exc.status_code
         except HttpError as exc:
             status_code = getattr(exc.resp, "status", 502)
             return jsonify({"error": f"Google Sheets API error (HTTP {status_code})."}), 502

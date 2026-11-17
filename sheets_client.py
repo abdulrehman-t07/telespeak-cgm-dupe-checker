@@ -11,10 +11,19 @@ from typing import Any
 
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
 
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets.readonly"]
 PHONE_PATTERN = re.compile(r"^\d{10}$")
 PLACEHOLDER_SHEET_ID = "PASTE_YOUR_GOOGLE_SHEET_ID_HERE"
+
+
+class SheetFetchError(Exception):
+    """Raised when fetching a specific Google Sheet fails with context."""
+
+    def __init__(self, message: str, status_code: int = 502) -> None:
+        super().__init__(message)
+        self.status_code = status_code
 
 
 class ConfigurationError(Exception):
@@ -63,6 +72,13 @@ def _parse_credentials_env(raw: str) -> dict[str, Any]:
     return json.loads(cleaned)
 
 
+def _extract_spreadsheet_id(raw: str) -> str:
+    """Extract spreadsheet ID from a raw ID or full Google Sheets URL."""
+    cleaned = raw.strip()
+    match = re.search(r"/spreadsheets/d/([a-zA-Z0-9-_]+)", cleaned)
+    return match.group(1) if match else cleaned
+
+
 def _resolve_runtime_config(base_dir: Path) -> dict[str, Any]:
     """Merge config.json (if present) with environment variable overrides."""
     config_path = base_dir / "config.json"
@@ -73,7 +89,9 @@ def _resolve_runtime_config(base_dir: Path) -> dict[str, Any]:
     env_sheet_id = os.environ.get("SPREADSHEET_ID", "").strip()
     env_sheet_name = os.environ.get("SHEET_NAME", "").strip()
     if env_sheet_id:
-        config["spreadsheet_id"] = env_sheet_id
+        config["spreadsheet_id"] = _extract_spreadsheet_id(env_sheet_id)
+    elif config.get("spreadsheet_id"):
+        config["spreadsheet_id"] = _extract_spreadsheet_id(str(config["spreadsheet_id"]))
     if env_sheet_name:
         config["sheet_name"] = env_sheet_name
 
@@ -81,7 +99,9 @@ def _resolve_runtime_config(base_dir: Path) -> dict[str, Any]:
     env_second_id = os.environ.get("SECOND_SPREADSHEET_ID", "").strip()
     env_second_name = os.environ.get("SECOND_SHEET_NAME", "").strip()
     if env_second_id:
-        second_cfg["spreadsheet_id"] = env_second_id
+        second_cfg["spreadsheet_id"] = _extract_spreadsheet_id(env_second_id)
+    elif second_cfg.get("spreadsheet_id"):
+        second_cfg["spreadsheet_id"] = _extract_spreadsheet_id(str(second_cfg["spreadsheet_id"]))
     if env_second_name:
         second_cfg["sheet_name"] = env_second_name
     if second_cfg:
@@ -377,14 +397,37 @@ class GoogleSheetService:
         sheet_name = str(config.get("sheet_name", "Sheet1")).strip() or "Sheet1"
 
         service = build("sheets", "v4", credentials=creds, cache_discovery=False)
-        rows = self._fetch_tab_values(service, spreadsheet_id, sheet_name)
+        try:
+            rows = self._fetch_tab_values(service, spreadsheet_id, sheet_name)
+        except HttpError as exc:
+            code = getattr(exc.resp, "status", 502)
+            if code == 404:
+                raise SheetFetchError("Primary Google Sheet not found. Check SPREADSHEET_ID.", 502) from exc
+            if code == 403:
+                raise SheetFetchError("Access denied on primary Google Sheet. Share it with the service account.", 502) from exc
+            if code == 400:
+                raise SheetFetchError(f"Tab '{sheet_name}' not found in primary Google Sheet.", 502) from exc
+            raise
 
         second_rows: list[list[Any]] | None = None
         second_cfg = config.get("second_sheet") or {}
         second_id = str(second_cfg.get("spreadsheet_id", "")).strip()
         if second_id and second_id != PLACEHOLDER_SHEET_ID:
             second_name = str(second_cfg.get("sheet_name", "")).strip()
-            second_rows = self._fetch_tab_values(service, second_id, second_name)
+            try:
+                second_rows = self._fetch_tab_values(service, second_id, second_name)
+            except HttpError as exc:
+                code = getattr(exc.resp, "status", 502)
+                if code == 404:
+                    raise SheetFetchError(
+                        "Second Google Sheet not found. Check SECOND_SPREADSHEET_ID (and ensure it is a Google Sheet, not an .xlsx file).",
+                        502,
+                    ) from exc
+                if code == 403:
+                    raise SheetFetchError("Access denied on second Google Sheet. Share it with the service account.", 502) from exc
+                if code == 400:
+                    raise SheetFetchError("Invalid tab name on second Google Sheet. Check SECOND_SHEET_NAME.", 502) from exc
+                raise
 
         with self._lock:
             self._cached_rows = rows
