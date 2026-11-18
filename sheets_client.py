@@ -252,11 +252,11 @@ def search_rows(
 
 
 def _matches_us_or_ten_digit(cell_value: str, target: str) -> bool:
-    """Match exact 10-digit target or 11-digit '1' + 10-digit target."""
-    cleaned = cell_value.strip()
-    if cleaned == target:
+    """Match 10-digit target or 11-digit '1' + target, ignoring formatting like +1, spaces, or dashes."""
+    digits = re.sub(r"\D", "", cell_value)
+    if digits == target:
         return True
-    return len(cleaned) == 11 and cleaned.startswith("1") and cleaned[1:] == target
+    return len(digits) == 11 and digits.startswith("1") and digits[1:] == target
 
 
 def search_column_a_rows(rows: list[list[Any]], phone_number: str) -> dict[str, Any]:

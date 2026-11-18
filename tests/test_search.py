@@ -166,11 +166,12 @@ def test_search_column_a_matches_leading_1_and_exact_10_digits():
         ["Phone", "Status"],
         ["19012409963", "Used"],
         ["9012409963", "Also Used"],
+        ["+1 (901) 240-9963", "Formatted US"],
         ["29012409963", "Different prefix"],
     ]
     res = search_column_a_rows(rows_with_header, "9012409963")
-    assert res["total_rows_searched"] == 3
-    assert [m["row_number"] for m in res["matches"]] == [2, 3]
+    assert res["total_rows_searched"] == 4
+    assert [m["row_number"] for m in res["matches"]] == [2, 3, 4]
     assert res["matches"][0]["matched_indices"] == [0]
 
 
