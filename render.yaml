@@ -10,7 +10,5 @@ services:
         value: 3.12.0
       - key: SPREADSHEET_ID
         sync: false
-      - key: SHEET_NAME
-        value: Form Responses 1
       - key: GOOGLE_CREDENTIALS_JSON
         sync: false

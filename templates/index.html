@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>CGM Dupe Checker</title>
-  <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v='6') }}" />
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v='7') }}" />
 </head>
 <body>
   <main class="container">
@@ -13,64 +13,43 @@
         <h1>CGM Dupe Checker</h1>
         <span id="statusBadge" class="status-pill status-loading">Checking…</span>
       </div>
-      <button type="button" id="syncBtn" class="btn-sync hidden" title="Refresh data">
+      <button type="button" id="syncBtn" class="btn-sync" title="Refresh data">
         ↻ Sync
       </button>
     </header>
 
-    <section id="authSection" class="auth-wrap hidden">
-      <form id="authForm" class="search-form" novalidate>
+    <section class="search-wrap">
+      <form id="searchForm" class="search-form" novalidate>
         <div class="input-group">
-          <label for="passwordInput" class="sr-only">Password</label>
+          <label for="phoneInput" class="sr-only">10-digit phone number</label>
           <input
-            type="password"
-            id="passwordInput"
-            name="password"
-            autocomplete="current-password"
-            placeholder="Enter password to continue"
+            type="text"
+            id="phoneInput"
+            name="phone"
+            inputmode="numeric"
+            autocomplete="off"
+            maxlength="10"
+            placeholder="Enter 10-digit phone number"
             autofocus
           />
+          <span id="digitCount" class="digit-count">0/10</span>
+          <button type="button" id="clearBtn" class="btn-clear hidden" title="Clear">✕</button>
         </div>
-        <button type="submit" id="authBtn" class="btn-primary">Unlock</button>
+        <button type="submit" id="searchBtn" class="btn-primary">Check</button>
       </form>
-      <div id="authErrorBox" class="alert alert-error hidden" role="alert"></div>
+      <div id="errorBox" class="alert alert-error hidden" role="alert"></div>
     </section>
 
-    <section id="appSection" class="hidden">
-      <div class="search-wrap">
-        <form id="searchForm" class="search-form" novalidate>
-          <div class="input-group">
-            <label for="phoneInput" class="sr-only">10-digit phone number</label>
-            <input
-              type="text"
-              id="phoneInput"
-              name="phone"
-              inputmode="numeric"
-              autocomplete="off"
-              maxlength="10"
-              placeholder="Enter 10-digit phone number"
-            />
-            <span id="digitCount" class="digit-count">0/10</span>
-            <button type="button" id="clearBtn" class="btn-clear hidden" title="Clear">✕</button>
-          </div>
-          <button type="submit" id="searchBtn" class="btn-primary">Check</button>
-        </form>
-        <div id="errorBox" class="alert alert-error hidden" role="alert"></div>
-      </div>
-
-      <section id="resultsSection" class="results-section hidden">
-        <div id="verdictBanner" class="verdict-banner">
-          <div class="verdict-left">
-            <span id="verdictLabel" class="verdict-label"></span>
-            <span id="verdictDetail" class="verdict-detail"></span>
-          </div>
+    <section id="resultsSection" class="results-section hidden">
+      <div id="verdictBanner" class="verdict-banner">
+        <div class="verdict-left">
+          <span id="verdictLabel" class="verdict-label"></span>
+          <span id="verdictDetail" class="verdict-detail"></span>
         </div>
-
-        <div id="resultsTables" class="results-tables hidden"></div>
-      </section>
+      </div>
     </section>
   </main>
 
-  <script src="{{ url_for('static', filename='app.js', v='6') }}"></script>
+  <script src="{{ url_for('static', filename='app.js', v='7') }}"></script>
 </body>
 </html>

@@ -18,37 +18,31 @@ PHONE_PATTERN = re.compile(r"^\d{10}$")
 PLACEHOLDER_SHEET_ID = "PASTE_YOUR_GOOGLE_SHEET_ID_HERE"
 
 
-class SheetFetchError(Exception):
-    """Raised when fetching a specific Google Sheet fails with context."""
+class AppError(Exception):
+    """Error carrying an opaque public error code without leaking details."""
 
-    def __init__(self, message: str, status_code: int = 502) -> None:
-        super().__init__(message)
+    def __init__(self, code: str, detail: str, status_code: int = 502) -> None:
+        super().__init__(detail)
+        self.code = code
         self.status_code = status_code
-
-
-class ConfigurationError(Exception):
-    """Raised when config.json or credentials.json is missing or incomplete."""
 
 
 def validate_phone_number(raw_number: str) -> str:
     """Validate and return a strict 10-digit phone number string."""
     cleaned = (raw_number or "").strip()
     if not PHONE_PATTERN.fullmatch(cleaned):
-        raise ValueError("Please enter a valid 10-digit phone number (e.g. 8319754818).")
+        raise ValueError("Please enter a valid 10-digit phone number.")
     return cleaned
 
 
 def load_config(config_path: Path) -> dict[str, Any]:
     """Load configuration from config.json."""
     if not config_path.exists():
-        raise ConfigurationError(f"Missing configuration file: {config_path.name}")
-
+        return {}
     try:
-        data = json.loads(config_path.read_text(encoding="utf-8"))
+        return json.loads(config_path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
-        raise ConfigurationError(f"Invalid JSON in {config_path.name}: {exc}") from exc
-
-    return data
+        raise AppError("E101", f"Invalid JSON in {config_path.name}: {exc}", 503) from exc
 
 
 def _parse_credentials_env(raw: str) -> dict[str, Any]:
@@ -79,72 +73,48 @@ def _extract_spreadsheet_id(raw: str) -> str:
     return match.group(1) if match else cleaned
 
 
-def _resolve_runtime_config(base_dir: Path) -> dict[str, Any]:
-    """Merge config.json (if present) with environment variable overrides."""
-    config_path = base_dir / "config.json"
-    config: dict[str, Any] = {}
-    if config_path.exists():
-        config = load_config(config_path)
+def _resolve_sheet_target(base_dir: Path) -> tuple[str, str, dict[str, Any]]:
+    """Resolve the active Google Sheet ID and tab name (preferring SECOND_SPREADSHEET_ID)."""
+    config = load_config(base_dir / "config.json")
 
-    env_sheet_id = os.environ.get("SPREADSHEET_ID", "").strip()
-    env_sheet_name = os.environ.get("SHEET_NAME", "").strip()
-    if env_sheet_id:
-        config["spreadsheet_id"] = _extract_spreadsheet_id(env_sheet_id)
-    elif config.get("spreadsheet_id"):
-        config["spreadsheet_id"] = _extract_spreadsheet_id(str(config["spreadsheet_id"]))
-    if env_sheet_name:
-        config["sheet_name"] = env_sheet_name
-
-    second_cfg = dict(config.get("second_sheet") or {})
+    second_cfg = config.get("second_sheet") or {}
     env_second_id = os.environ.get("SECOND_SPREADSHEET_ID", "").strip()
     env_second_name = os.environ.get("SECOND_SHEET_NAME", "").strip()
-    if env_second_id:
-        second_cfg["spreadsheet_id"] = _extract_spreadsheet_id(env_second_id)
-    elif second_cfg.get("spreadsheet_id"):
-        second_cfg["spreadsheet_id"] = _extract_spreadsheet_id(str(second_cfg["spreadsheet_id"]))
-    if env_second_name:
-        second_cfg["sheet_name"] = env_second_name
-    if second_cfg:
-        config["second_sheet"] = second_cfg
 
-    return config
+    if env_second_id:
+        return _extract_spreadsheet_id(env_second_id), env_second_name, config
+
+    if second_cfg.get("spreadsheet_id"):
+        return (
+            _extract_spreadsheet_id(str(second_cfg["spreadsheet_id"])),
+            env_second_name or str(second_cfg.get("sheet_name", "")).strip(),
+            config,
+        )
+
+    env_id = os.environ.get("SPREADSHEET_ID", "").strip()
+    env_name = os.environ.get("SHEET_NAME", "").strip()
+    sheet_id = _extract_spreadsheet_id(env_id or str(config.get("spreadsheet_id", "")))
+    sheet_name = env_name or str(config.get("sheet_name", "")).strip()
+    return sheet_id, sheet_name, config
 
 
 def get_setup_status(base_dir: Path) -> dict[str, Any]:
-    """Return current configuration status without failing."""
-    config_path = base_dir / "config.json"
-    env_creds_json = os.environ.get("GOOGLE_CREDENTIALS_JSON", "").strip()
-
-    status: dict[str, Any] = {
-        "configured": False,
-        "has_config": config_path.exists() or bool(os.environ.get("SPREADSHEET_ID", "").strip()),
-        "has_credentials": False,
-        "has_spreadsheet_id": False,
-        "spreadsheet_id": "",
-        "sheet_name": "Sheet1",
-        "service_account_email": None,
-        "message": "",
-    }
-
+    """Return minimal configuration status without exposing sheet internals."""
     try:
-        config = _resolve_runtime_config(base_dir)
-    except ConfigurationError as exc:
-        status["message"] = str(exc)
-        return status
+        sheet_id, _, config = _resolve_sheet_target(base_dir)
+    except AppError:
+        return {"configured": False}
 
-    spreadsheet_id = str(config.get("spreadsheet_id", "")).strip()
-    sheet_name = str(config.get("sheet_name", "Sheet1")).strip() or "Sheet1"
-    status["spreadsheet_id"] = spreadsheet_id
-    status["sheet_name"] = sheet_name
-    status["has_spreadsheet_id"] = bool(spreadsheet_id and spreadsheet_id != PLACEHOLDER_SHEET_ID)
+    has_sheet_id = bool(sheet_id and sheet_id != PLACEHOLDER_SHEET_ID)
 
+    has_credentials = False
+    env_creds_json = os.environ.get("GOOGLE_CREDENTIALS_JSON", "").strip()
     if env_creds_json:
         try:
-            creds_data = _parse_credentials_env(env_creds_json)
-            status["has_credentials"] = True
-            status["service_account_email"] = creds_data.get("client_email")
+            _parse_credentials_env(env_creds_json)
+            has_credentials = True
         except Exception:
-            status["has_credentials"] = False
+            has_credentials = False
     else:
         creds_rel = str(config.get("credentials_file", "credentials.json")).strip() or "credentials.json"
         creds_path = Path(creds_rel)
@@ -152,103 +122,12 @@ def get_setup_status(base_dir: Path) -> dict[str, Any]:
             creds_path = base_dir / creds_path
         if creds_path.exists():
             try:
-                creds_data = json.loads(creds_path.read_text(encoding="utf-8"))
-                status["has_credentials"] = True
-                status["service_account_email"] = creds_data.get("client_email")
+                json.loads(creds_path.read_text(encoding="utf-8"))
+                has_credentials = True
             except (OSError, json.JSONDecodeError):
-                status["has_credentials"] = False
+                has_credentials = False
 
-    if not status["has_credentials"]:
-        status["message"] = "Service account credentials not found or invalid."
-    elif not status["has_spreadsheet_id"]:
-        status["message"] = "Please set your Google Sheet ID."
-    else:
-        status["configured"] = True
-        status["message"] = "Connected configuration ready."
-
-    return status
-
-
-def resolve_target_columns(
-    headers: list[str],
-    original_name: str = "Phone (Original)",
-    show_name: str = "Phone (Show)",
-) -> tuple[int, int, str, str]:
-    """Find indices for Phone (Original) and Phone (Show), falling back to D (3) and E (4)."""
-    normalized = [h.strip() for h in headers]
-
-    orig_idx = normalized.index(original_name) if original_name in normalized else 3
-    show_idx = normalized.index(show_name) if show_name in normalized else 4
-
-    orig_label = headers[orig_idx].strip() if orig_idx < len(headers) and headers[orig_idx].strip() else original_name
-    show_label = headers[show_idx].strip() if show_idx < len(headers) and headers[show_idx].strip() else show_name
-
-    return orig_idx, show_idx, orig_label, show_label
-
-
-def search_rows(
-    rows: list[list[Any]],
-    phone_number: str,
-    original_col_name: str = "Phone (Original)",
-    show_col_name: str = "Phone (Show)",
-) -> dict[str, Any]:
-    """Search sheet rows for an exact 10-digit match in Phone (Original) or Phone (Show)."""
-    target = validate_phone_number(phone_number)
-
-    if not rows:
-        return {
-            "query": target,
-            "headers": [],
-            "matches": [],
-            "total_rows_searched": 0,
-            "target_columns": [original_col_name, show_col_name],
-        }
-
-    raw_headers = [str(cell) for cell in rows[0]]
-    max_width = max(len(raw_headers), *(len(r) for r in rows[1:])) if len(rows) > 1 else len(raw_headers)
-
-    headers = list(raw_headers)
-    for col_idx in range(len(headers), max_width):
-        headers.append(f"Column {col_idx + 1}")
-
-    orig_idx, show_idx, orig_label, show_label = resolve_target_columns(
-        headers, original_col_name, show_col_name
-    )
-
-    matches: list[dict[str, Any]] = []
-    data_rows = rows[1:]
-
-    for offset, row in enumerate(data_rows):
-        sheet_row_number = offset + 2
-        row_values = [str(cell) if cell is not None else "" for cell in row]
-        if len(row_values) < max_width:
-            row_values.extend([""] * (max_width - len(row_values)))
-
-        matched_columns: list[str] = []
-        matched_indices: list[int] = []
-
-        for col_idx, col_label in ((orig_idx, orig_label), (show_idx, show_label)):
-            if col_idx < len(row_values) and col_idx not in matched_indices and row_values[col_idx].strip() == target:
-                matched_columns.append(col_label)
-                matched_indices.append(col_idx)
-
-        if matched_columns:
-            matches.append(
-                {
-                    "row_number": sheet_row_number,
-                    "matched_columns": matched_columns,
-                    "matched_indices": matched_indices,
-                    "values": row_values,
-                }
-            )
-
-    return {
-        "query": target,
-        "headers": headers,
-        "matches": matches,
-        "total_rows_searched": len(data_rows),
-        "target_columns": [orig_label, show_label],
-    }
+    return {"configured": has_sheet_id and has_credentials}
 
 
 def _matches_us_or_ten_digit(cell_value: str, target: str) -> bool:
@@ -259,87 +138,45 @@ def _matches_us_or_ten_digit(cell_value: str, target: str) -> bool:
     return len(digits) == 11 and digits.startswith("1") and digits[1:] == target
 
 
-def search_column_a_rows(rows: list[list[Any]], phone_number: str) -> dict[str, Any]:
-    """Search Column A for 10-digit target or 11-digit '1' + target."""
+def check_column_a_duplicate(rows: list[list[Any]], phone_number: str) -> bool:
+    """Return True if phone_number exists in Column A (10-digit or '1' + 10-digit)."""
     target = validate_phone_number(phone_number)
-
     if not rows:
-        return {
-            "query": target,
-            "headers": [],
-            "matches": [],
-            "total_rows_searched": 0,
-        }
+        return False
 
     first_col_cell = str(rows[0][0]).strip() if rows[0] else ""
-    first_row_is_data = bool(re.fullmatch(r"\d{10,11}", first_col_cell))
+    first_row_is_data = bool(re.fullmatch(r"\d{10,11}", re.sub(r"\D", "", first_col_cell)))
+    data_rows = rows if first_row_is_data else rows[1:]
 
-    max_width = max(len(r) for r in rows)
-    if first_row_is_data:
-        headers = ["Phone"] + [f"Column {i + 1}" for i in range(1, max_width)]
-        data_rows = rows
-        start_row_number = 1
-    else:
-        raw_headers = [str(cell) for cell in rows[0]]
-        headers = list(raw_headers)
-        for col_idx in range(len(headers), max_width):
-            headers.append(f"Column {col_idx + 1}")
-        data_rows = rows[1:]
-        start_row_number = 2
-
-    matches: list[dict[str, Any]] = []
-    for offset, row in enumerate(data_rows):
-        sheet_row_number = offset + start_row_number
-        row_values = [str(cell) if cell is not None else "" for cell in row]
-        if len(row_values) < max_width:
-            row_values.extend([""] * (max_width - len(row_values)))
-
-        if row_values and _matches_us_or_ten_digit(row_values[0], target):
-            matches.append(
-                {
-                    "row_number": sheet_row_number,
-                    "matched_columns": [headers[0]],
-                    "matched_indices": [0],
-                    "values": row_values,
-                }
-            )
-
-    return {
-        "query": target,
-        "headers": headers,
-        "matches": matches,
-        "total_rows_searched": len(data_rows),
-    }
+    for row in data_rows:
+        if row and _matches_us_or_ten_digit(str(row[0] or ""), target):
+            return True
+    return False
 
 
 class GoogleSheetService:
-    """Client for fetching rows from private Google Sheets via Service Account."""
+    """Client for checking phone numbers against a private Google Sheet."""
 
     def __init__(self, base_dir: Path, cache_ttl_seconds: float = 20.0) -> None:
         self.base_dir = base_dir
         self.cache_ttl_seconds = cache_ttl_seconds
         self._lock = threading.Lock()
         self._cached_rows: list[list[Any]] | None = None
-        self._cached_second_rows: list[list[Any]] | None = None
-        self._cached_config: dict[str, Any] | None = None
         self._cache_time: float = 0.0
 
-    def _get_config_and_credentials(self) -> tuple[dict[str, Any], Credentials]:
-        config = _resolve_runtime_config(self.base_dir)
-        spreadsheet_id = str(config.get("spreadsheet_id", "")).strip()
-        if not spreadsheet_id or spreadsheet_id == PLACEHOLDER_SHEET_ID:
-            raise ConfigurationError("Please set a valid 'spreadsheet_id' in config.json or SPREADSHEET_ID env var.")
+    def _get_target_and_credentials(self) -> tuple[str, str, Credentials]:
+        sheet_id, sheet_name, config = _resolve_sheet_target(self.base_dir)
+        if not sheet_id or sheet_id == PLACEHOLDER_SHEET_ID:
+            raise AppError("E101", "Missing or placeholder spreadsheet ID.", 503)
 
         env_creds_json = os.environ.get("GOOGLE_CREDENTIALS_JSON", "").strip()
         if env_creds_json:
             try:
                 info = _parse_credentials_env(env_creds_json)
+                creds = Credentials.from_service_account_info(info, scopes=SCOPES)
+                return sheet_id, sheet_name, creds
             except Exception as exc:
-                raise ConfigurationError(
-                    "Invalid GOOGLE_CREDENTIALS_JSON: paste the full JSON contents of credentials.json (or base64-encoded JSON)."
-                ) from exc
-            creds = Credentials.from_service_account_info(info, scopes=SCOPES)
-            return config, creds
+                raise AppError("E102", f"Invalid GOOGLE_CREDENTIALS_JSON: {exc}", 503) from exc
 
         creds_rel = str(config.get("credentials_file", "credentials.json")).strip() or "credentials.json"
         creds_path = Path(creds_rel)
@@ -347,136 +184,77 @@ class GoogleSheetService:
             creds_path = self.base_dir / creds_path
 
         if not creds_path.exists():
-            raise ConfigurationError(
-                f"Credentials file '{creds_path.name}' not found. Place your Google Service Account JSON in {self.base_dir} or set GOOGLE_CREDENTIALS_JSON."
-            )
+            raise AppError("E102", f"Credentials file not found: {creds_path}", 503)
 
-        creds = Credentials.from_service_account_file(str(creds_path), scopes=SCOPES)
-        return config, creds
+        try:
+            creds = Credentials.from_service_account_file(str(creds_path), scopes=SCOPES)
+        except Exception as exc:
+            raise AppError("E102", f"Invalid credentials file: {exc}", 503) from exc
+        return sheet_id, sheet_name, creds
 
-    @staticmethod
-    def _fetch_tab_values(service: Any, spreadsheet_id: str, sheet_name: str) -> list[list[Any]]:
-        target_tab = sheet_name.strip()
-        if not target_tab:
-            meta = (
-                service.spreadsheets()
-                .get(spreadsheetId=spreadsheet_id, fields="sheets(properties(title))")
-                .execute()
-            )
-            sheets = meta.get("sheets", [])
-            if not sheets:
-                return []
-            target_tab = sheets[0]["properties"]["title"]
-
-        result = (
-            service.spreadsheets()
-            .values()
-            .get(
-                spreadsheetId=spreadsheet_id,
-                range=f"'{target_tab}'",
-                valueRenderOption="FORMATTED_VALUE",
-            )
-            .execute()
-        )
-        return result.get("values", [])
-
-    def _fetch_all(self, force_refresh: bool = False) -> tuple[list[list[Any]], list[list[Any]] | None, dict[str, Any]]:
-        """Fetch primary and optional secondary sheet rows using a short-lived cache."""
+    def fetch_rows(self, force_refresh: bool = False) -> list[list[Any]]:
+        """Fetch Column A values from the configured Google Sheet using a short-lived cache."""
         with self._lock:
             now = time.monotonic()
             if (
                 not force_refresh
                 and self._cached_rows is not None
-                and self._cached_config is not None
                 and (now - self._cache_time) < self.cache_ttl_seconds
             ):
-                return self._cached_rows, self._cached_second_rows, self._cached_config
+                return self._cached_rows
 
-        config, creds = self._get_config_and_credentials()
-        spreadsheet_id = str(config["spreadsheet_id"]).strip()
-        sheet_name = str(config.get("sheet_name", "Sheet1")).strip() or "Sheet1"
-
+        sheet_id, sheet_name, creds = self._get_target_and_credentials()
         service = build("sheets", "v4", credentials=creds, cache_discovery=False)
+
         try:
-            rows = self._fetch_tab_values(service, spreadsheet_id, sheet_name)
+            target_tab = sheet_name.strip()
+            if not target_tab:
+                meta = (
+                    service.spreadsheets()
+                    .get(spreadsheetId=sheet_id, fields="sheets(properties(title))")
+                    .execute()
+                )
+                sheets = meta.get("sheets", [])
+                if not sheets:
+                    rows: list[list[Any]] = []
+                    with self._lock:
+                        self._cached_rows = rows
+                        self._cache_time = time.monotonic()
+                    return rows
+                target_tab = sheets[0]["properties"]["title"]
+
+            result = (
+                service.spreadsheets()
+                .values()
+                .get(
+                    spreadsheetId=sheet_id,
+                    range=f"'{target_tab}'!A:A",
+                    valueRenderOption="FORMATTED_VALUE",
+                )
+                .execute()
+            )
+            rows = result.get("values", [])
         except HttpError as exc:
             code = getattr(exc.resp, "status", 502)
-            if code == 404:
-                raise SheetFetchError("Primary Google Sheet not found. Check SPREADSHEET_ID.", 502) from exc
             if code == 403:
-                raise SheetFetchError("Access denied on primary Google Sheet. Share it with the service account.", 502) from exc
+                raise AppError("E103", "Google Sheets access denied (403).", 502) from exc
+            if code == 404:
+                raise AppError("E104", "Google Sheet not found (404).", 502) from exc
             if code == 400:
-                raise SheetFetchError(f"Tab '{sheet_name}' not found in primary Google Sheet.", 502) from exc
-            raise
-
-        second_rows: list[list[Any]] | None = None
-        second_cfg = config.get("second_sheet") or {}
-        second_id = str(second_cfg.get("spreadsheet_id", "")).strip()
-        if second_id and second_id != PLACEHOLDER_SHEET_ID:
-            second_name = str(second_cfg.get("sheet_name", "")).strip()
-            try:
-                second_rows = self._fetch_tab_values(service, second_id, second_name)
-            except HttpError as exc:
-                code = getattr(exc.resp, "status", 502)
-                if code == 404:
-                    raise SheetFetchError(
-                        "Second Google Sheet not found. Check SECOND_SPREADSHEET_ID (and ensure it is a Google Sheet, not an .xlsx file).",
-                        502,
-                    ) from exc
-                if code == 403:
-                    raise SheetFetchError("Access denied on second Google Sheet. Share it with the service account.", 502) from exc
-                if code == 400:
-                    raise SheetFetchError("Invalid tab name on second Google Sheet. Check SECOND_SHEET_NAME.", 502) from exc
-                raise
+                raise AppError("E105", "Invalid sheet tab/range (400).", 502) from exc
+            raise AppError("E106", f"Google Sheets API error ({code}).", 502) from exc
 
         with self._lock:
             self._cached_rows = rows
-            self._cached_second_rows = second_rows
-            self._cached_config = config
             self._cache_time = time.monotonic()
 
-        return rows, second_rows, config
+        return rows
 
-    def fetch_rows(self, force_refresh: bool = False) -> tuple[list[list[Any]], dict[str, Any]]:
-        """Fetch all rows from the configured sheet tab(s), using a short-lived cache."""
-        rows, _, config = self._fetch_all(force_refresh=force_refresh)
-        return rows, config
-
-    def search_phone(self, phone_number: str, force_refresh: bool = False) -> dict[str, Any]:
-        """Validate phone_number, fetch sheet rows, and return matching rows across all configured sheets."""
+    def check_phone(self, phone_number: str, force_refresh: bool = False) -> dict[str, Any]:
+        """Validate phone_number and return whether it is a duplicate."""
         validated = validate_phone_number(phone_number)
-        rows, second_rows, config = self._fetch_all(force_refresh=force_refresh)
-
-        columns_cfg = config.get("columns", {})
-        orig_name = str(columns_cfg.get("original", "Phone (Original)")).strip() or "Phone (Original)"
-        show_name = str(columns_cfg.get("show", "Phone (Show)")).strip() or "Phone (Show)"
-
-        primary_res = search_rows(rows, validated, original_col_name=orig_name, show_col_name=show_name)
-        sources: list[dict[str, Any]] = [
-            {
-                "label": "Sheet 1",
-                "headers": primary_res["headers"],
-                "matches": primary_res["matches"],
-                "total_rows_searched": primary_res["total_rows_searched"],
-            }
-        ]
-        total_searched = primary_res["total_rows_searched"]
-        total_matches = len(primary_res["matches"])
-
-        if second_rows is not None:
-            second_res = search_column_a_rows(second_rows, validated)
-            sources.append(
-                {
-                    "label": "Sheet 2",
-                    "headers": second_res["headers"],
-                    "matches": second_res["matches"],
-                    "total_rows_searched": second_res["total_rows_searched"],
-                }
-            )
-            total_searched += second_res["total_rows_searched"]
-            total_matches += len(second_res["matches"])
-
-        primary_res["sources"] = sources
-        primary_res["total_rows_searched"] = total_searched
-        primary_res["total_matches"] = total_matches
-        return primary_res
+        rows = self.fetch_rows(force_refresh=force_refresh)
+        return {
+            "query": validated,
+            "is_duplicate": check_column_a_duplicate(rows, validated),
+        }
